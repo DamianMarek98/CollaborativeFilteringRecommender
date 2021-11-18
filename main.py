@@ -28,7 +28,6 @@ class ColaborativeFilteringRecommender:
     film_averages = []
     # rx,i - avg(x)
     deviation_matrix = []
-    cross_validation = 5
 
     # fixable params
     nearest_neighbours_num = 2
@@ -40,12 +39,13 @@ class ColaborativeFilteringRecommender:
         self.prepare_matrixes()
         self.calculate_deviations()
         # prediction
-        self.person_corelation_coefficient_prediction()
+        # self.person_corelation_coefficient_prediction()
         # naive prediction
-        self.naive_prediction()
+        # self.naive_prediction()
         # mae
         # rmse
-        self.check()
+        # self.check()
+        self.fold_cross_validation()
 
     def read_movielens(self):
         for user_rating in self.movielens.raw_ratings:
@@ -88,12 +88,16 @@ class ColaborativeFilteringRecommender:
                     num_of_ratings += 1
             self.film_averages[film_index] = (avg / num_of_ratings)
 
-    def predict_from_nearest_neighbours(self, user_index, film_index):
+    def predict_from_nearest_neighbours(self, user_index, film_index, first_user_test_index, last_user_test_index):
         user_film_ratings = self.zeros_matrix[user_index]
         neighbours = []
 
         for user_i in range(0, self.num_of_users):
             if user_i == user_index or self.zeros_matrix[user_i][film_index] == 0:
+                continue
+
+            # dont use test set values:
+            if user_i >= first_user_test_index and user_i <= last_user_test_index:
                 continue
 
             choosen_user_ratings = []
@@ -114,8 +118,6 @@ class ColaborativeFilteringRecommender:
                     neighbour_user_ratings.append(self.zeros_matrix[user_i][film_i])
                     deviation_choosen_user_ratings.append(self.deviation_matrix[user_index][film_i])
                     deviation_neighbour_user_ratings.append(self.deviation_matrix[user_i][film_i])
-
-            # what if noone rated this film
 
             user_x_ratings = np.array(choosen_user_ratings)
             user_y_ratings = np.array(neighbour_user_ratings)
@@ -153,25 +155,31 @@ class ColaborativeFilteringRecommender:
 
         return pred
 
-    def person_corelation_coefficient_prediction(self):
-        for user_index in range(0, self.num_of_users):
-            for film_index in range(0, self.num_of_films):
-                if self.zeros_matrix[user_index][film_index] != 0:
-                    pred = self.predict_from_nearest_neighbours(user_index, film_index)
-                    self.result_matrix[user_index][film_index] = pred
+    # def person_corelation_coefficient_prediction(self):
+    #     for user_index in range(0, self.num_of_users):
+    #         for film_index in range(0, self.num_of_films):
+    #             if self.zeros_matrix[user_index][film_index] != 0:
+    #                pred = self.predict_from_nearest_neighbours(user_index, film_index)
+    #                self.result_matrix[user_index][film_index] = pred
 
-    def naive_prediction(self):
-        for user_index in range(0, self.num_of_users):
-            for film_index in range(0, self.num_of_films):
-                if self.zeros_matrix[user_index][film_index] != 0:
-                    self.naive_result_matrix[user_index][film_index] = self.predict_naive_for_user(user_index, film_index)
+    # def naive_prediction(self, first_user_test_index, last_user_test_index):
+    #     for user_index in range(0, self.num_of_users):
+    #         for film_index in range(0, self.num_of_films):
+    #             if self.zeros_matrix[user_index][film_index] != 0:
+    #                 self.naive_result_matrix[user_index][film_index] = self.predict_naive_for_user(user_index,
+    #                                                                                                film_index)
 
-    def predict_naive_for_user(self, selected_user_index, film_index):
+    def predict_naive_for_user(self, selected_user_index, film_index, first_user_test_index, last_user_test_index):
         avg = 0
         num_of_ratings = 0
         for user_index in range(0, self.num_of_users):
             if user_index == selected_user_index:
                 continue
+
+            # dont use test set values:
+            if user_index >= first_user_test_index and user_index <= last_user_test_index:
+                continue
+
             if self.zeros_matrix[user_index][film_index] != 0:
                 avg += self.zeros_matrix[user_index][film_index]
                 num_of_ratings += 1
@@ -181,11 +189,11 @@ class ColaborativeFilteringRecommender:
 
         return avg / num_of_ratings
 
-    def check(self):
+    def check(self, first_user_test_index, last_user_test_index):
         predicted_known_values = []
         known_values = []
         predicted_naive_known_values = []
-        for user_index in range(0, self.num_of_users):
+        for user_index in range(first_user_test_index, last_user_test_index):
             for film_index in range(0, self.num_of_films):
                 if self.zeros_matrix[user_index][film_index] != 0:
                     known_values.append(self.zeros_matrix[user_index][film_index])
@@ -196,10 +204,34 @@ class ColaborativeFilteringRecommender:
         mae_real_pred = self.mae(known_values, predicted_known_values)
         rsme_real_pred = self.rmse(known_values, predicted_known_values)
         rsme_real_naive = self.rmse(known_values, predicted_naive_known_values)
+        print("Calculation for test group user indexes: " + str(first_user_test_index) + " to " + str(
+            last_user_test_index))
         print("rsme naive against real: " + str(rsme_real_naive))
         print("rmse predicted against real: " + str(rsme_real_pred))
         print("mae naive against real: " + str(mae_real_naive))
         print("mae predicted against real: " + str(mae_real_pred))
+
+    def fold_cross_validation(self):
+        cross_validation = 8
+        users_in_set = 118
+        for i in range(1, (cross_validation + 1)):
+            print("Iteration " + str(i) + "out of " + str(cross_validation))
+            first_user = (i - 1) * users_in_set
+            last_user = i * users_in_set
+            for j in range((i - 1) * users_in_set, i * users_in_set):
+                for film_index in range(0, self.num_of_films):
+                    if self.zeros_matrix[j][film_index] != 0:
+                        pred = self.predict_from_nearest_neighbours(j, film_index, first_user, last_user)
+                        self.result_matrix[j][film_index] = pred
+
+            for user_index in range(0, self.num_of_users):
+                for film_index in range(0, self.num_of_films):
+                    if self.zeros_matrix[user_index][film_index] != 0:
+                        self.naive_result_matrix[user_index][film_index] = self.predict_naive_for_user(user_index,
+                                                                                                       film_index,
+                                                                                                       first_user,
+                                                                                                       last_user)
+            self.check(first_user, last_user)
 
     def rmse(self, values, predicted):
         iterator = len(values)
@@ -246,4 +278,3 @@ class ColaborativeFilteringRecommender:
 # Press the green button in the gutter to run the script.
 if __name__ == '__main__':
     cfr = ColaborativeFilteringRecommender()
-    a = 1
