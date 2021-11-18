@@ -22,10 +22,13 @@ class ColaborativeFilteringRecommender:
     movielens = None
     zeros_matrix = []
     result_matrix = []
+    naive_result_matrix = []
     user_ratings = []
     user_averages = []
+    film_averages = []
     # rx,i - avg(x)
     deviation_matrix = []
+    cross_validation = 5
 
     # fixable params
     nearest_neighbours_num = 2
@@ -36,6 +39,13 @@ class ColaborativeFilteringRecommender:
         self.read_movielens()
         self.prepare_matrixes()
         self.calculate_deviations()
+        # prediction
+        self.person_corelation_coefficient_prediction()
+        # naive prediction
+        self.naive_prediction()
+        # mae
+        # rmse
+        self.check()
 
     def read_movielens(self):
         for user_rating in self.movielens.raw_ratings:
@@ -52,14 +62,14 @@ class ColaborativeFilteringRecommender:
     def prepare_matrixes(self):
         self.zeros_matrix = np.zeros([self.num_of_users, self.num_of_films])
         self.result_matrix = np.zeros([self.num_of_users, self.num_of_films])
+        self.naive_result_matrix = np.zeros([self.num_of_users, self.num_of_films])
         self.deviation_matrix = np.zeros([self.num_of_users, self.num_of_films])
         self.user_averages = np.zeros([self.num_of_users])
+        self.film_averages = np.zeros([self.num_of_films])
         for user_rating in self.user_ratings:
             self.zeros_matrix[int(user_rating.user_id) - 1][int(user_rating.item_id) - 1] = user_rating.rating
             self.result_matrix[int(user_rating.user_id) - 1][int(user_rating.item_id) - 1] = user_rating.rating
-
-    def rmse(self, real, predicted):
-        return math.sqrt(((np.array(real) - np.array(predicted)) ** 2).mean())
+            self.naive_result_matrix[int(user_rating.user_id) - 1][int(user_rating.item_id) - 1] = user_rating.rating
 
     def calculate_deviations(self):
         for user_index in range(0, self.num_of_users):
@@ -69,7 +79,16 @@ class ColaborativeFilteringRecommender:
                 if self.zeros_matrix[user_index][film_index] != 0:
                     self.deviation_matrix[user_index][film_index] = self.zeros_matrix[user_index][film_index] - avg
 
-    def find_nearest_neighbours(self, user_index, film_index):
+        for film_index in range(0, self.num_of_films):
+            avg = 0
+            num_of_ratings = 0
+            for user_index in range(0, self.num_of_users):
+                if self.zeros_matrix[user_index][film_index] != 0:
+                    avg += self.zeros_matrix[user_index][film_index]
+                    num_of_ratings += 1
+            self.film_averages[film_index] = (avg / num_of_ratings)
+
+    def predict_from_nearest_neighbours(self, user_index, film_index):
         user_film_ratings = self.zeros_matrix[user_index]
         neighbours = []
 
@@ -96,6 +115,8 @@ class ColaborativeFilteringRecommender:
                     deviation_choosen_user_ratings.append(self.deviation_matrix[user_index][film_i])
                     deviation_neighbour_user_ratings.append(self.deviation_matrix[user_i][film_i])
 
+            # what if noone rated this film
+
             user_x_ratings = np.array(choosen_user_ratings)
             user_y_ratings = np.array(neighbour_user_ratings)
             user_x_avg = user_x_ratings.mean()
@@ -105,29 +126,98 @@ class ColaborativeFilteringRecommender:
             user_x_ratings_minus_avg = fx(user_x_ratings)
             user_y_ratings_minus_avg = fy(user_y_ratings)
 
-
             if len(choosen_user_ratings) != 0:
-                # tuple (user from iteration index, distance: 1 - angle, choosen_user_ratings, neighbour_user_ratings)
-                #sim = self.calculate_sim(choosen_user_ratings, neighbour_user_ratings)
+                # sim = self.calculate_sim(choosen_user_ratings, neighbour_user_ratings)
                 sim = 1 - distance.cosine(user_x_ratings_minus_avg, user_y_ratings_minus_avg)
-                neighbours.append((user_i, sim, choosen_user_ratings, neighbour_user_ratings))
+                if sim != 0:  # sim = 0 better to tak avg
+                    # tuple (user from iteration index, distance: 1 - angle)
+                    neighbours.append((user_i, sim, choosen_user_ratings))
 
-        result = 0
         if len(neighbours) == 0:  # no neighbours then we use
-            result = self.user_averages[user_index]
+            pred = self.user_averages[user_index]
         else:  # sort neighbours:
-            neighbours.sort(key=lambda x: x[1])
+            neighbours.sort(key=lambda x: abs(x[1]))
             if len(neighbours) > self.nearest_neighbours_num:
                 neighbours = neighbours[0:self.nearest_neighbours_num - 1]
 
-            #for neighbour in neighbours:
+            # prediction slajd 8
+            pred = self.user_averages[user_index]
+            nominator = 0
+            denominator = 0
+            for neighbour in neighbours:
+                nominator += (neighbour[1] * self.deviation_matrix[neighbour[0]][
+                    film_index])  # sum sim(x,y) * ry,i - avg ry
+                denominator += neighbour[1]  # sum sim(x,y)
 
+            pred += (nominator / denominator)
 
+        return pred
 
+    def person_corelation_coefficient_prediction(self):
+        for user_index in range(0, self.num_of_users):
+            for film_index in range(0, self.num_of_films):
+                if self.zeros_matrix[user_index][film_index] != 0:
+                    pred = self.predict_from_nearest_neighbours(user_index, film_index)
+                    self.result_matrix[user_index][film_index] = pred
 
+    def naive_prediction(self):
+        for user_index in range(0, self.num_of_users):
+            for film_index in range(0, self.num_of_films):
+                if self.zeros_matrix[user_index][film_index] != 0:
+                    self.naive_result_matrix[user_index][film_index] = self.predict_naive_for_user(user_index, film_index)
 
+    def predict_naive_for_user(self, selected_user_index, film_index):
+        avg = 0
+        num_of_ratings = 0
+        for user_index in range(0, self.num_of_users):
+            if user_index == selected_user_index:
+                continue
+            if self.zeros_matrix[user_index][film_index] != 0:
+                avg += self.zeros_matrix[user_index][film_index]
+                num_of_ratings += 1
 
+        if num_of_ratings == 0:
+            return self.zeros_matrix[selected_user_index][film_index]
 
+        return avg / num_of_ratings
+
+    def check(self):
+        predicted_known_values = []
+        known_values = []
+        predicted_naive_known_values = []
+        for user_index in range(0, self.num_of_users):
+            for film_index in range(0, self.num_of_films):
+                if self.zeros_matrix[user_index][film_index] != 0:
+                    known_values.append(self.zeros_matrix[user_index][film_index])
+                    predicted_known_values.append(self.result_matrix[user_index][film_index])
+                    predicted_naive_known_values.append(self.naive_result_matrix[user_index][film_index])
+
+        mae_real_naive = self.mae(known_values, predicted_naive_known_values)
+        mae_real_pred = self.mae(known_values, predicted_known_values)
+        rsme_real_pred = self.rmse(known_values, predicted_known_values)
+        rsme_real_naive = self.rmse(known_values, predicted_naive_known_values)
+        print("rsme naive against real: " + str(rsme_real_naive))
+        print("rmse predicted against real: " + str(rsme_real_pred))
+        print("mae naive against real: " + str(mae_real_naive))
+        print("mae predicted against real: " + str(mae_real_pred))
+
+    def rmse(self, values, predicted):
+        iterator = len(values)
+        res = 0
+        for i in range(0, iterator):
+            res += pow((predicted[i] - values[i]), 2)
+
+        return np.sqrt(res / iterator)
+
+    def mae(self, values, predicted):
+        iterator = len(values)
+        res = 0
+        for i in range(0, iterator):
+            res += abs(predicted[i] - values[i])
+
+        return res / iterator
+
+    # not used - implemented while checking results
     def calculate_sim(self, user_x_ratings, user_y_ratings):
         user_x_ratings = np.array(user_x_ratings)
         user_y_ratings = np.array(user_y_ratings)
@@ -143,7 +233,6 @@ class ColaborativeFilteringRecommender:
         for i in range(0, len(user_x_ratings_minus_avg)):
             nominator += (user_x_ratings_minus_avg[i] * user_y_ratings_minus_avg[i])
         # mianownik
-        denominator = 0
         sum_of_pow_x = 0
         sum_of_pow_y = 0
         for i in range(0, len(user_x_ratings_minus_avg)):
@@ -154,9 +243,7 @@ class ColaborativeFilteringRecommender:
         return nominator / denominator
 
 
-
 # Press the green button in the gutter to run the script.
 if __name__ == '__main__':
     cfr = ColaborativeFilteringRecommender()
-    cfr.find_nearest_neighbours(2, 2)
     a = 1
